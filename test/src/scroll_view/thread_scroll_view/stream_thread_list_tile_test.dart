@@ -1,0 +1,162 @@
+import 'package:alchemist/alchemist.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:mocktail/mocktail.dart';
+import 'package:stream_chat_flutter/stream_chat_flutter.dart';
+
+import '../../mocks.dart';
+
+void main() {
+  final user1 = User(id: 'uid1', name: 'User 1');
+  final user2 = User(id: 'uid2', name: 'User 2');
+  final createdAt = DateTime.parse('2021-07-20T16:00:00.000Z');
+  final thread = Thread(
+    activeParticipantCount: 2,
+    channelCid: 'channel-type:channel-id',
+    channel: ChannelModel(
+      cid: 'channel-type:channel-id',
+      extraData: const {'name': 'Group ride'},
+    ),
+    parentMessageId: 'parent-message-id',
+    parentMessage: Message(
+      id: 'parent-message-id',
+      text: "Hey everyone, who's up for a group ride this Saturday morning?",
+    ),
+    createdByUserId: 'uid1',
+    createdBy: user2,
+    participantCount: 2,
+    threadParticipants: [
+      ThreadParticipant(
+        user: user1,
+        channelCid: '',
+        createdAt: createdAt,
+        lastReadAt: createdAt,
+      ),
+      ThreadParticipant(
+        user: user2,
+        channelCid: '',
+        createdAt: createdAt,
+        lastReadAt: createdAt,
+      ),
+    ],
+    lastMessageAt: createdAt,
+    createdAt: createdAt,
+    updatedAt: createdAt,
+    title: 'Group ride preparation and discussion',
+    replyCount: 1,
+    latestReplies: [
+      Message(
+        id: 'mid1',
+        text: 'See you all there, stay safe on the roads!',
+        user: user1,
+        createdAt: createdAt,
+        updatedAt: createdAt,
+      ),
+    ],
+    read: [
+      Read(
+        user: user2,
+        lastRead: createdAt,
+        unreadMessages: 3,
+      ),
+    ],
+  );
+
+  for (final brightness in Brightness.values) {
+    goldenTest(
+      '[${brightness.name}] -> StreamThreadListTile looks fine',
+      fileName: 'stream_thread_list_tile_${brightness.name}',
+      constraints: const BoxConstraints.tightFor(width: 600, height: 150),
+      builder: () => _wrapWithMaterialApp(
+        brightness: brightness,
+        StreamThreadListTile(thread: thread, currentUser: user2),
+      ),
+    );
+  }
+
+  group('Formatter Tests', () {
+    testWidgets(
+      'StreamThreadListTile displays custom formatted timestamp',
+      (tester) async {
+        await tester.pumpWidget(
+          _wrapWithMaterialApp(
+            StreamThreadListTileTheme(
+              data: StreamThreadListTileThemeData(
+                threadLatestReplyTimestampFormatter: (context, timestamp) {
+                  return 'CUSTOM_FORMAT_20_07_2021';
+                },
+              ),
+              child: StreamThreadListTile(thread: thread, currentUser: user2),
+            ),
+          ),
+        );
+
+        await tester.pumpAndSettle();
+
+        // Verify the custom formatted text is visible
+        expect(find.text('CUSTOM_FORMAT_20_07_2021'), findsOneWidget);
+      },
+    );
+
+    testWidgets(
+      'StreamThreadListTile inner theme overrides outer theme',
+      (tester) async {
+        await tester.pumpWidget(
+          _wrapWithMaterialApp(
+            StreamThreadListTileTheme(
+              data: StreamThreadListTileThemeData(
+                threadLatestReplyTimestampFormatter: (context, timestamp) {
+                  return 'OUTER_FORMATTER';
+                },
+              ),
+              child: StreamThreadListTileTheme(
+                data: StreamThreadListTileThemeData(
+                  threadLatestReplyTimestampFormatter: (context, timestamp) {
+                    return 'INNER_FORMATTER';
+                  },
+                ),
+                child: StreamThreadListTile(thread: thread, currentUser: user2),
+              ),
+            ),
+          ),
+        );
+
+        await tester.pumpAndSettle();
+
+        // Inner formatter should be used
+        expect(find.text('INNER_FORMATTER'), findsOneWidget);
+        expect(find.text('OUTER_FORMATTER'), findsNothing);
+      },
+    );
+  });
+}
+
+Widget _wrapWithMaterialApp(
+  Widget widget, {
+  Brightness? brightness,
+}) {
+  final client = MockClient();
+  final clientState = MockClientState();
+  final currentUser = OwnUser(id: 'current-user-id', name: 'Current User');
+
+  when(() => client.state).thenReturn(clientState);
+  when(() => clientState.currentUser).thenReturn(currentUser);
+
+  return MaterialApp(
+    home: StreamChat(
+      client: client,
+      streamChatConfigData: StreamChatConfigurationData(),
+      connectivityStream: Stream.value([ConnectivityResult.wifi]),
+      streamChatThemeData: StreamChatThemeData(brightness: brightness),
+      child: Builder(
+        builder: (context) {
+          final theme = StreamChatTheme.of(context);
+          return Scaffold(
+            backgroundColor: theme.colorTheme.appBg,
+            body: Center(child: widget),
+          );
+        },
+      ),
+    ),
+  );
+}
