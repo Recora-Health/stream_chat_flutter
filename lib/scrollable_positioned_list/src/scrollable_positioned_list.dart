@@ -550,6 +550,10 @@ class _ScrollablePositionedListState extends State<ScrollablePositionedList>
     final newAnchor =
         viewport > 0 ? currentAlignment + pixels / viewport : currentAlignment;
 
+    // Never feed a non-finite anchor into the viewport: it would make every
+    // subsequent offset computation NaN/Infinity.
+    if (!currentAlignment.isFinite || !newAnchor.isFinite) return;
+
     if (newIndex == primary.target && primary.alignment == newAnchor) return;
     primary
       ..target = newIndex
@@ -899,7 +903,7 @@ class _ScrollablePositionedListState extends State<ScrollablePositionedList>
       final keyBuilder = widget.itemKeyBuilder;
       if (keyBuilder != null) {
         final key = keyBuilder(topmost.index);
-        if (key != null) {
+        if (key != null && topmost.itemLeadingEdge.isFinite) {
           _lastKnownFirstItemKey = key;
           _lastKnownFirstItemIndex = topmost.index;
           _firstVisibleItemAlignment = topmost.itemLeadingEdge;

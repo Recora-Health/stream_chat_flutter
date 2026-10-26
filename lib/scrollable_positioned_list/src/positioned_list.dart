@@ -536,91 +536,106 @@ class _PositionedListState extends State<PositionedList> {
     if (!updateScheduled) {
       updateScheduled = true;
       SchedulerBinding.instance.addPostFrameCallback((_) {
-        final elements = registeredElements.value;
-        if (elements == null) {
+        try {
+          _publishItemPositions();
+        } finally {
+          // Reset even when the update throws; otherwise every later
+          // update is skipped for the rest of this list's lifetime and
+          // position-driven behaviour (mark-read, auto-scroll, anchor
+          // preservation) silently stops.
           updateScheduled = false;
-          return;
         }
-        final positions = <ItemPosition>[];
-        RenderViewportBase? viewport;
-        for (final element in elements) {
-          final box = element.renderObject! as RenderBox;
-          viewport ??= RenderAbstractViewport.of(box) as RenderViewportBase?;
-          var anchor = 0.0;
-          if (viewport is RenderViewport) {
-            anchor = viewport.anchor;
-          }
-
-          if (viewport is CustomRenderViewport) {
-            anchor = viewport.anchor;
-          }
-
-          final key = element.widget.key! as IndexedKey;
-          // Skip this element if `box` has never been laid out, isn't
-          // currently attached to the viewport's render tree, or sits in
-          // a sliver that doesn't have a current scroll offset for it.
-          //
-          // The third case is the subtle one: a [RenderBox] can be
-          // [attached] (alive in the pipeline) yet not part of its
-          // parent sliver's live children — e.g. when it's kept alive but
-          // sits outside the cache extent, or transiently during a
-          // sliver reorganization triggered by anchor preservation. In
-          // that state [RenderSliver.childScrollOffset] returns `null`,
-          // and Flutter's [RenderViewportBase.getOffsetToReveal] asserts
-          // non-null on the result. Guard with try/catch so a transient
-          // unreachable child doesn't kill the entire position update;
-          // the next layout will surface them.
-          if (!box.hasSize) continue;
-          if (!box.attached) continue;
-          try {
-            if (widget.scrollDirection == Axis.vertical) {
-              final reveal = viewport!.getOffsetToReveal(box, 0).offset;
-              if (!reveal.isFinite) continue;
-              final itemOffset = reveal -
-                  viewport.offset.pixels +
-                  anchor * viewport.size.height;
-              positions.add(
-                ItemPosition(
-                  index: key.index,
-                  itemLeadingEdge: itemOffset.round() /
-                      scrollController.position.viewportDimension,
-                  itemTrailingEdge: (itemOffset + box.size.height).round() /
-                      scrollController.position.viewportDimension,
-                ),
-              );
-            } else {
-              final itemOffset =
-                  box.localToGlobal(Offset.zero, ancestor: viewport).dx;
-              if (!itemOffset.isFinite) continue;
-              final viewportDimension =
-                  scrollController.position.viewportDimension;
-              // Branch on the resolved axis direction so RTL is handled.
-              final isRight = _axisDirection == AxisDirection.right;
-              final leadingPx = isRight
-                  ? itemOffset
-                  : viewportDimension - (itemOffset + box.size.width);
-              final trailingPx = isRight
-                  ? itemOffset + box.size.width
-                  : viewportDimension - itemOffset;
-              positions.add(
-                ItemPosition(
-                  index: key.index,
-                  itemLeadingEdge: leadingPx.round() / viewportDimension,
-                  itemTrailingEdge: trailingPx.round() / viewportDimension,
-                ),
-              );
-            }
-          } on TypeError catch (_) {
-            // Specifically the null-check failure inside
-            // `getOffsetToReveal` → `childScrollOffset` described above.
-            // Narrowed to `TypeError` so any other genuine bug still
-            // surfaces.
-            continue;
-          }
-        }
-        widget.itemPositionsNotifier?.itemPositions.value = positions;
-        updateScheduled = false;
       });
     }
+  }
+
+  void _publishItemPositions() {
+    final elements = registeredElements.value;
+    if (elements == null) return;
+    final positions = <ItemPosition>[];
+    RenderViewportBase? viewport;
+    for (final element in elements) {
+      final box = element.renderObject! as RenderBox;
+      viewport ??= RenderAbstractViewport.of(box) as RenderViewportBase?;
+      var anchor = 0.0;
+      if (viewport is RenderViewport) {
+        anchor = viewport.anchor;
+      }
+
+      if (viewport is CustomRenderViewport) {
+        anchor = viewport.anchor;
+      }
+
+      final key = element.widget.key! as IndexedKey;
+      // Skip this element if `box` has never been laid out, isn't
+      // currently attached to the viewport's render tree, or sits in
+      // a sliver that doesn't have a current scroll offset for it.
+      //
+      // The third case is the subtle one: a [RenderBox] can be
+      // [attached] (alive in the pipeline) yet not part of its
+      // parent sliver's live children — e.g. when it's kept alive but
+      // sits outside the cache extent, or transiently during a
+      // sliver reorganization triggered by anchor preservation. In
+      // that state [RenderSliver.childScrollOffset] returns `null`,
+      // and Flutter's [RenderViewportBase.getOffsetToReveal] asserts
+      // non-null on the result. Guard with try/catch so a transient
+      // unreachable child doesn't kill the entire position update;
+      // the next layout will surface them.
+      if (!box.hasSize) continue;
+      if (!box.attached) continue;
+      try {
+        if (widget.scrollDirection == Axis.vertical) {
+          final reveal = viewport!.getOffsetToReveal(box, 0).offset;
+          if (!reveal.isFinite) continue;
+          final itemOffset =
+              reveal - viewport.offset.pixels + anchor * viewport.size.height;
+          // `pixels` (and the anchor derived from an earlier position
+          // snapshot) can transiently be non-finite; `round()` throws
+          // `UnsupportedError: Infinity or NaN toInt` on such values.
+          // Mirrors the guard the horizontal branch already has.
+          if (!itemOffset.isFinite) continue;
+          final viewportDimension = scrollController.position.viewportDimension;
+          // A zero-height viewport has nothing visible; dividing by it
+          // would publish infinite edges that later poison the anchor.
+          if (viewportDimension <= 0) continue;
+          positions.add(
+            ItemPosition(
+              index: key.index,
+              itemLeadingEdge: itemOffset.round() / viewportDimension,
+              itemTrailingEdge:
+                  (itemOffset + box.size.height).round() / viewportDimension,
+            ),
+          );
+        } else {
+          final itemOffset =
+              box.localToGlobal(Offset.zero, ancestor: viewport).dx;
+          if (!itemOffset.isFinite) continue;
+          final viewportDimension = scrollController.position.viewportDimension;
+          if (viewportDimension <= 0) continue;
+          // Branch on the resolved axis direction so RTL is handled.
+          final isRight = _axisDirection == AxisDirection.right;
+          final leadingPx = isRight
+              ? itemOffset
+              : viewportDimension - (itemOffset + box.size.width);
+          final trailingPx = isRight
+              ? itemOffset + box.size.width
+              : viewportDimension - itemOffset;
+          positions.add(
+            ItemPosition(
+              index: key.index,
+              itemLeadingEdge: leadingPx.round() / viewportDimension,
+              itemTrailingEdge: trailingPx.round() / viewportDimension,
+            ),
+          );
+        }
+      } on TypeError catch (_) {
+        // Specifically the null-check failure inside
+        // `getOffsetToReveal` → `childScrollOffset` described above.
+        // Narrowed to `TypeError` so any other genuine bug still
+        // surfaces.
+        continue;
+      }
+    }
+    widget.itemPositionsNotifier?.itemPositions.value = positions;
   }
 }

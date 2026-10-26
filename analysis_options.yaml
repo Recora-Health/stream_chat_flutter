@@ -1,0 +1,8 @@
+# Vendored third-party code (see VENDORED.md). No lint set is included on
+# purpose: the analyzer still reports errors and warnings, but the app's style
+# lints are not applied to code we do not maintain.
+analyzer:
+  errors:
+    deprecated_member_use: ignore
+  exclude:
+    - build/**
